@@ -73,7 +73,7 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 /* visionneuse */
 .viewer{position:fixed;inset:0;z-index:20;background:#0b1508;display:none;flex-direction:column;touch-action:pan-y}
 .viewer.open{display:flex}
-.stagewrap{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.stagewrap{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;touch-action:none}
 .stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;box-shadow:0 0 60px rgba(0,0,0,.5)}
 .stage .fiche *{box-sizing:border-box}
 .stage .fiche h2,.stage .fiche p{margin:0}
@@ -404,12 +404,50 @@ setPrix(state.prix);
 
 // visionneuse
 const viewer = document.getElementById('viewer'), stage = document.getElementById('stage'), wrap = document.getElementById('stagewrap'), vpos = document.getElementById('vpos');
-function fit(){ const r = wrap.getBoundingClientRect(); const s = Math.min(r.width/1920, r.height/1080); stage.style.transform = `translate(${(r.width-1920*s)/2}px,${(r.height-1080*s)/2}px) scale(${s})`; }
+// zoom (pincement, double-tap, glisser) + balayage quand non zoomé
+function zoomer(wrap, stage, W, H, onSwipe){
+  const Z = {s:1, ox:0, oy:0, z:1, px:0, py:0};
+  const apply = () => { stage.style.transform = `translate(${Z.ox+Z.px}px,${Z.oy+Z.py}px) scale(${Z.s*Z.z})`; };
+  const clamp = () => { const r=wrap.getBoundingClientRect(); const w=W*Z.s*Z.z, h=H*Z.s*Z.z;
+    const minx = Math.min(0, r.width - w) - Z.ox, maxx = Math.max(0, r.width - w) - Z.ox;
+    const miny = Math.min(0, r.height - h) - Z.oy, maxy = Math.max(0, r.height - h) - Z.oy;
+    Z.px = Math.min(maxx, Math.max(minx, Z.px)); Z.py = Math.min(maxy, Math.max(miny, Z.py)); };
+  const fit = () => { const r=wrap.getBoundingClientRect(); Z.s=Math.min(r.width/W, r.height/H); Z.ox=(r.width-W*Z.s)/2; Z.oy=(r.height-H*Z.s)/2; clamp(); apply(); };
+  const reset = () => { Z.z=1; Z.px=0; Z.py=0; apply(); };
+  const zoomAt = (nz, cx, cy) => { const r=wrap.getBoundingClientRect(); const x=cx-r.left, y=cy-r.top;
+    const c = [(x-Z.ox-Z.px)/(Z.s*Z.z), (y-Z.oy-Z.py)/(Z.s*Z.z)]; Z.z=Math.min(4, Math.max(1, nz));
+    Z.px = x-Z.ox-c[0]*Z.s*Z.z; Z.py = y-Z.oy-c[1]*Z.s*Z.z; if(Z.z<=1.02){ Z.z=1; Z.px=0; Z.py=0; } clamp(); apply(); };
+  let t0=null, d0=0, z0=1, p0=null, moved=false, lastTap=0;
+  const dist = e => Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+  const mid = e => [(e.touches[0].clientX+e.touches[1].clientX)/2, (e.touches[0].clientY+e.touches[1].clientY)/2];
+  wrap.addEventListener('touchstart', e => {
+    if(e.touches.length===2){ d0=dist(e); z0=Z.z; t0=null; moved=true; }
+    else if(e.touches.length===1){ t0=[e.touches[0].clientX, e.touches[0].clientY]; p0=[Z.px, Z.py]; moved=false; }
+  }, {passive:true});
+  wrap.addEventListener('touchmove', e => {
+    if(e.touches.length===2){ e.preventDefault(); const m=mid(e); zoomAt(z0*dist(e)/d0, m[0], m[1]); }
+    else if(e.touches.length===1 && t0){ const dx=e.touches[0].clientX-t0[0], dy=e.touches[0].clientY-t0[1];
+      if(Math.hypot(dx,dy)>8) moved=true;
+      if(Z.z>1){ e.preventDefault(); Z.px=p0[0]+dx; Z.py=p0[1]+dy; clamp(); apply(); } }
+  }, {passive:false});
+  wrap.addEventListener('touchend', e => {
+    if(e.touches.length>0 || !t0) { if(e.touches.length===0) t0=null; return; }
+    const dx=e.changedTouches[0].clientX-t0[0], dy=e.changedTouches[0].clientY-t0[1];
+    if(Z.z===1 && Math.abs(dx)>60 && Math.abs(dx)>Math.abs(dy)*1.5){ onSwipe(dx<0?1:-1); }
+    else if(!moved){ const now=Date.now(); if(now-lastTap<400){ zoomAt(Z.z>1?1:2.5, e.changedTouches[0].clientX, e.changedTouches[0].clientY); lastTap=0; } else lastTap=now; }
+    t0=null;
+  });
+  wrap.addEventListener('dblclick', e => zoomAt(Z.z>1?1:2.5, e.clientX, e.clientY));
+  wrap.addEventListener('wheel', e => { if(e.ctrlKey){ e.preventDefault(); zoomAt(Z.z*(e.deltaY<0?1.1:0.9), e.clientX, e.clientY); } }, {passive:false});
+  return {fit, reset};
+}
+const ZF = zoomer(wrap, stage, 1920, 1080, d => show(state.cur+d));
+function fit(){ ZF.fit(); }
 function fillPrix(){ const w = state.list[state.cur]; const p = stage.querySelector('.prix'); if(!p) return; p.innerHTML = state.prix>=0 ? `${fmt(w.prix[state.prix])}<span>TTC</span>` : ''; }
 function show(i){
   if(i<0||i>=state.list.length) return; state.cur=i; const w=state.list[i];
   stage.innerHTML=''; stage.appendChild(document.getElementById('f'+w.n).content.cloneNode(true)); stage.querySelectorAll('img[src^="/_blob/"]').forEach(im=>{ const d=ASSETS[im.getAttribute('src').slice(7)]; if(d) im.src=d; });
-  fillPrix(); fit(); vpos.textContent = `${i+1} / ${state.list.length}`;
+  ZF.reset(); fillPrix(); fit(); vpos.textContent = `${i+1} / ${state.list.length}`;
   document.getElementById('vprev').disabled = i===0; document.getElementById('vnext').disabled = i===state.list.length-1;
   try{ history.replaceState(null,'','#w'+w.n) }catch(e){}
   // préchargement des voisines
@@ -423,12 +461,13 @@ function openN(n){ state.list = W.slice(); let i = state.list.findIndex(w=>w.n==
 // catalogue intégré
 const catview=document.getElementById('catview'), catstage=document.getElementById('catstage'), catwrap=document.getElementById('catwrap'), cpos=document.getElementById('cpos');
 const cfmt = v => v.replace(/,50$/,',5').replace(/,00$/,'') + '€';
-function catFit(){ const r=catwrap.getBoundingClientRect(); const s=Math.min(r.width/1600, r.height/900); catstage.style.transform=`translate(${(r.width-1600*s)/2}px,${(r.height-900*s)/2}px) scale(${s})`; }
+const ZC = zoomer(catwrap, catstage, 1600, 900, d => catShow(state.cat+d));
+function catFit(){ ZC.fit(); }
 function fillCatPrix(){ catstage.querySelectorAll('.cp').forEach(el=>{ const w=W[+el.dataset.n-1]; el.textContent = state.prix>=0 ? cfmt(w.prix[state.prix]) : ''; }); }
 function catShow(i){
   if(i<0||i>=CAT.length) return; state.cat=i; const c=CAT[i]; const k=c.slots.length; const cw=1600/(k||1);
   catstage.innerHTML = `<img src="${c.img}" alt="">` + c.slots.map((n,j)=>`<button class="slot" data-n="${n}" style="left:${j*cw+4}px;width:${cw-8}px" aria-label="${W[n-1].h2}"></button><div class="cp" data-n="${n}" style="left:${(j+.5)*cw}px"></div>`).join('') + (k ? '<div class="hint">Touchez une bouteille pour ouvrir sa fiche</div>' : '');
-  fillCatPrix(); catFit(); cpos.textContent = i===0 ? 'Couverture' : `Page ${i} / ${CAT.length-1}`;
+  ZC.reset(); fillCatPrix(); catFit(); cpos.textContent = i===0 ? 'Couverture' : `Page ${i} / ${CAT.length-1}`;
   document.getElementById('cprev').disabled = i===0; document.getElementById('cnext').disabled = i===CAT.length-1;
   [i-1,i+1].forEach(j=>{ if(CAT[j]){ const x=new Image(); x.src=CAT[j].img; } });
 }
@@ -439,9 +478,7 @@ document.getElementById('cclose').addEventListener('click', catClose);
 document.getElementById('cprev').addEventListener('click', ()=>catShow(state.cat-1));
 document.getElementById('cnext').addEventListener('click', ()=>catShow(state.cat+1));
 catstage.addEventListener('click', e=>{ const b=e.target.closest('.slot'); if(b) openN(+b.dataset.n); });
-let cx=null, cy=null;
-catwrap.addEventListener('touchstart', e=>{ cx=e.touches[0].clientX; cy=e.touches[0].clientY; }, {passive:true});
-catwrap.addEventListener('touchend', e=>{ if(cx==null) return; const dx=e.changedTouches[0].clientX-cx, dy=e.changedTouches[0].clientY-cy; cx=null; if(Math.abs(dx)>60 && Math.abs(dx)>Math.abs(dy)*1.5) catShow(state.cat+(dx<0?1:-1)); });
+
 document.getElementById('vclose').addEventListener('click', close);
 document.getElementById('vprev').addEventListener('click', ()=>show(state.cur-1));
 document.getElementById('vnext').addEventListener('click', ()=>show(state.cur+1));
@@ -453,9 +490,7 @@ document.addEventListener('keydown', e=>{
   else if(state.cat>=0){ if(e.key==='ArrowRight') catShow(state.cat+1); else if(e.key==='ArrowLeft') catShow(state.cat-1); else if(e.key==='Escape') catClose(); }
 });
 // balayage
-let tx=null, ty=null;
-wrap.addEventListener('touchstart', e=>{ tx=e.touches[0].clientX; ty=e.touches[0].clientY; }, {passive:true});
-wrap.addEventListener('touchend', e=>{ if(tx==null) return; const dx=e.changedTouches[0].clientX-tx, dy=e.changedTouches[0].clientY-ty; tx=null; if(Math.abs(dx)>60 && Math.abs(dx)>Math.abs(dy)*1.5) show(state.cur+(dx<0?1:-1)); });
+
 // ouverture directe par #wNN
 const m = /^#w(\d+)$/.exec(location.hash); if(m){ const i = state.list.findIndex(w=>w.n===+m[1]); if(i>=0) open(i); }
 if('serviceWorker' in navigator){ window.addEventListener('load', ()=>{ navigator.serviceWorker.register('./sw.js').catch(()=>{}); }); }
