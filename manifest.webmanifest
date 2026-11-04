@@ -1,0 +1,12 @@
+{
+  "name": "Fiches dégustation — Pépites de Vin",
+  "short_name": "Fiches",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#002b0a",
+  "theme_color": "#002b0a",
+  "lang": "fr",
+  "icons": [{"src": "icon.png", "sizes": "180x180", "type": "image/png"}, {"src": "icon512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}]
+}
