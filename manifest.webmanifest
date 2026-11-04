@@ -3,7 +3,7 @@
   "short_name": "Fiches",
   "start_url": "./index.html",
   "scope": "./",
-  "display": "fullscreen",
+  "display": "standalone",
   "orientation": "landscape",
   "background_color": "#002b0a",
   "theme_color": "#002b0a",
